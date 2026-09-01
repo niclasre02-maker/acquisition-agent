@@ -7,8 +7,11 @@ export const OPEN_MARKET_SPREADSHEET_ID =
   "10n-vWPuJMUv-TkmjjxupiBKoIgrobfDED1xKWQC0DsA";
 
 export const INTERIM_TABS = {
+  agentState: "Agent State",
+  // Im Regelwerk-Text noch "Interim Zielunternehmen" genannt, im echten
+  // Sheet aber tatsächlich so umbenannt (per Live-Check verifiziert).
+  zielunternehmen: "Zielkunden Fortschritt",
   regelwerk: "Interim Demand Regelwerk",
-  zielunternehmen: "Interim Zielunternehmen",
   radar: "Interim Demand Radar",
 } as const;
 

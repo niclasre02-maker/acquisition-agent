@@ -44,8 +44,8 @@ export default async function InterimZielunternehmenPage() {
         <DataTable
           headers={result.table.headers}
           rows={result.table.rows}
-          filterColumns={["Status", "ICP-Fit"]}
-          badgeColumns={["Status", "ICP-Fit", "Portal-/Procurement-Risiko"]}
+          filterColumns={["Prüfstatus"]}
+          badgeColumns={["Prüfstatus"]}
         />
       )}
     </div>

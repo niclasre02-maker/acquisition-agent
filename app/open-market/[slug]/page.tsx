@@ -82,13 +82,12 @@ export default async function OpenMarketSegmentPage({
         <DataTable
           headers={result.table.headers}
           rows={result.table.rows}
-          filterColumns={[
-            "Lead-Status",
-            "Branche (Primär)",
-            "Consultant Segment",
-            "Status",
-          ]}
-          badgeColumns={["Lead-Status", "Status"]}
+          filterColumns={
+            segment
+              ? ["Lead-Status", "Branche (Primär)", "Consultant Segment"]
+              : []
+          }
+          badgeColumns={segment ? ["Lead-Status"] : []}
         />
       )}
     </div>

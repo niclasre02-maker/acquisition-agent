@@ -13,7 +13,6 @@ import { loadTab } from "@/lib/loadTab";
 import { countByField, getField } from "@/lib/fields";
 import { StatCard } from "@/components/StatCard";
 import { SetupNotice } from "@/components/SetupNotice";
-import { Badge } from "@/components/Badge";
 
 export const revalidate = 60;
 
@@ -26,10 +25,12 @@ export default async function OverviewPage() {
 
   let radarResult: Awaited<ReturnType<typeof loadTab>> | null = null;
   let zielResult: Awaited<ReturnType<typeof loadTab>> | null = null;
+  let agentStateResult: Awaited<ReturnType<typeof loadTab>> | null = null;
   if (isInterim) {
-    [radarResult, zielResult] = await Promise.all([
+    [radarResult, zielResult, agentStateResult] = await Promise.all([
       loadTab(INTERIM_SPREADSHEET_ID, INTERIM_TABS.radar),
       loadTab(INTERIM_SPREADSHEET_ID, INTERIM_TABS.zielunternehmen),
+      loadTab(INTERIM_SPREADSHEET_ID, INTERIM_TABS.agentState),
     ]);
   }
 
@@ -71,11 +72,14 @@ export default async function OverviewPage() {
           {zielResult?.ok && (
             <p className="mt-3 text-sm text-neutral-500">
               Startliste:{" "}
-              <StatusInline records={zielResult.table.records} field="Status" /> ·{" "}
+              <StatusInline records={zielResult.table.records} field="Prüfstatus" /> ·{" "}
               <Link href="/interim-zielunternehmen" className="underline">
                 zur Startlisten-Ansicht
               </Link>
             </p>
+          )}
+          {agentStateResult?.ok && (
+            <AgentStateCards records={agentStateResult.table.records} />
           )}
         </section>
       )}
@@ -166,6 +170,41 @@ function StatusInline({
   return <>{parts.join(" · ") || "keine Daten"}</>;
 }
 
+function AgentStateCards({ records }: { records: Record<string, string>[] }) {
+  if (records.length === 0) return null;
+  return (
+    <div className="mt-3 flex flex-col gap-2">
+      {records.map((r, i) => {
+        const agent = getField(r, "Agent");
+        const status = getField(r, "Status");
+        const geprueft = getField(r, "Geprüft gesamt");
+        const offen = getField(r, "Noch offen");
+        const naechstes = getField(r, "Nächstes Unternehmen");
+        const letzterLauf = getField(r, "Letzter Lauf");
+        return (
+          <div
+            key={i}
+            className="rounded-lg border border-neutral-200 bg-white p-3 text-sm dark:border-neutral-800 dark:bg-neutral-900"
+          >
+            <p className="font-medium text-neutral-900 dark:text-neutral-50">
+              {agent || "Agent"}{" "}
+              <span className="ml-2 font-normal text-neutral-400">{letzterLauf}</span>
+            </p>
+            <p className="mt-1 text-neutral-600 dark:text-neutral-400">
+              {geprueft && `${geprueft} geprüft`}
+              {offen && ` · ${offen} offen`}
+              {naechstes && ` · als Nächstes: ${naechstes}`}
+            </p>
+            {status && (
+              <p className="mt-1 text-neutral-500 dark:text-neutral-500">{status}</p>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function OpenMarketStats({
   segments,
   segmentResults,
@@ -246,19 +285,22 @@ function LatestRun({ table }: { table: { records: Record<string, string>[] } }) 
   if (!last) {
     return <p className="text-sm text-neutral-500">Noch keine Suchläufe protokolliert.</p>;
   }
-  const start = getField(last, "Start", "Lauf-ID");
+  const laufId = getField(last, "Lauf-ID");
+  const start = getField(last, "Start");
   const ende = getField(last, "Ende");
   const bemerkung = getField(last, "Bemerkung");
+  const neu = getField(last, "Neue Leads");
+  const impulse = getField(last, "Erneute Impulse");
+  const geschlossen = getField(last, "Geschlossen");
   return (
     <div className="rounded-lg border border-neutral-200 bg-white p-4 text-sm dark:border-neutral-800 dark:bg-neutral-900">
       <p>
-        <span className="font-medium">Start:</span> {start || "–"}{" "}
-        <span className="ml-4 font-medium">Ende:</span> {ende || "–"}
+        <span className="font-medium">{laufId || "Lauf"}</span> · {start || "–"} – {ende || "–"}
+      </p>
+      <p className="mt-2 text-neutral-600 dark:text-neutral-400">
+        {neu || "0"} neue Leads · {impulse || "0"} erneute Impulse · {geschlossen || "0"} geschlossen
       </p>
       {bemerkung && <p className="mt-2 text-neutral-600 dark:text-neutral-400">{bemerkung}</p>}
-      <div className="mt-2">
-        <Badge value={getField(last, "Status") || ""} />
-      </div>
     </div>
   );
 }

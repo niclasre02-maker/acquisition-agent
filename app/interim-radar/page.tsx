@@ -45,12 +45,11 @@ export default async function InterimRadarPage() {
           rows={result.table.rows}
           filterColumns={[
             "Priorität",
-            "Account-Typ",
-            "Trigger-Kategorie",
-            "Branche",
+            "Signal-Kategorie",
+            "Executive-Level",
             "Status",
           ]}
-          badgeColumns={["Priorität", "Status", "Portal-/Procurement-Risiko"]}
+          badgeColumns={["Priorität", "Status"]}
         />
       )}
     </div>
