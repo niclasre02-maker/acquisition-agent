@@ -1,12 +1,18 @@
 import { INTERIM_SPREADSHEET_ID, INTERIM_TABS } from "@/lib/config";
+import { getPreferences } from "@/lib/preferences";
 import { loadTab } from "@/lib/loadTab";
 import { SetupNotice } from "@/components/SetupNotice";
+import { ScopeNotice } from "@/components/ScopeNotice";
 import { DataTable } from "@/components/DataTable";
 
 export const revalidate = 60;
 
 export default async function InterimRadarPage() {
-  const result = await loadTab(INTERIM_SPREADSHEET_ID, INTERIM_TABS.radar);
+  const prefs = await getPreferences();
+  const inScope = prefs.mode === "interim";
+  const result = inScope
+    ? await loadTab(INTERIM_SPREADSHEET_ID, INTERIM_TABS.radar)
+    : null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -18,7 +24,22 @@ export default async function InterimRadarPage() {
           Konkrete Interim-Chancen aus Startliste und freier DACH-Suche.
         </p>
       </div>
-      {result.ok ? (
+
+      {!inScope && (
+        <ScopeNotice>
+          Diese Ansicht ist nur im Modus &bdquo;Interim&ldquo; verfügbar. Du
+          bist aktuell im Branchen-Modus unterwegs.
+        </ScopeNotice>
+      )}
+
+      {inScope && result && !result.ok && (
+        <SetupNotice
+          kind={result.kind}
+          detail={result.kind === "access-error" ? result.detail : undefined}
+        />
+      )}
+
+      {inScope && result && result.ok && (
         <DataTable
           headers={result.table.headers}
           rows={result.table.rows}
@@ -30,11 +51,6 @@ export default async function InterimRadarPage() {
             "Status",
           ]}
           badgeColumns={["Priorität", "Status", "Portal-/Procurement-Risiko"]}
-        />
-      ) : (
-        <SetupNotice
-          kind={result.kind}
-          detail={result.kind === "access-error" ? result.detail : undefined}
         />
       )}
     </div>

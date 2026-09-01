@@ -1,11 +1,14 @@
 import Link from "next/link";
 import {
+  BRANCH_SEGMENTS,
+  INTERIM_OPEN_MARKET_SEGMENTS,
   INTERIM_SPREADSHEET_ID,
   INTERIM_TABS,
   OPEN_MARKET_META_TABS,
-  OPEN_MARKET_SEGMENTS,
   OPEN_MARKET_SPREADSHEET_ID,
+  type OpenMarketSegment,
 } from "@/lib/config";
+import { getPreferences } from "@/lib/preferences";
 import { loadTab } from "@/lib/loadTab";
 import { countByField, getField } from "@/lib/fields";
 import { StatCard } from "@/components/StatCard";
@@ -15,15 +18,25 @@ import { Badge } from "@/components/Badge";
 export const revalidate = 60;
 
 export default async function OverviewPage() {
-  const [radarResult, zielResult, suchlaeufeResult, ...segmentResults] =
-    await Promise.all([
+  const prefs = await getPreferences();
+  const isInterim = prefs.mode === "interim";
+  const segments = isInterim
+    ? INTERIM_OPEN_MARKET_SEGMENTS
+    : BRANCH_SEGMENTS.filter((seg) => prefs.branches.includes(seg.slug));
+
+  let radarResult: Awaited<ReturnType<typeof loadTab>> | null = null;
+  let zielResult: Awaited<ReturnType<typeof loadTab>> | null = null;
+  if (isInterim) {
+    [radarResult, zielResult] = await Promise.all([
       loadTab(INTERIM_SPREADSHEET_ID, INTERIM_TABS.radar),
       loadTab(INTERIM_SPREADSHEET_ID, INTERIM_TABS.zielunternehmen),
-      loadTab(OPEN_MARKET_SPREADSHEET_ID, OPEN_MARKET_META_TABS.suchlaeufe),
-      ...OPEN_MARKET_SEGMENTS.map((seg) =>
-        loadTab(OPEN_MARKET_SPREADSHEET_ID, seg.tab),
-      ),
     ]);
+  }
+
+  const [suchlaeufeResult, ...segmentResults] = await Promise.all([
+    loadTab(OPEN_MARKET_SPREADSHEET_ID, OPEN_MARKET_META_TABS.suchlaeufe),
+    ...segments.map((seg) => loadTab(OPEN_MARKET_SPREADSHEET_ID, seg.tab)),
+  ]);
 
   return (
     <div className="flex flex-col gap-10">
@@ -32,35 +45,40 @@ export default async function OverviewPage() {
           Übersicht
         </h1>
         <p className="mt-1 text-sm text-neutral-500">
-          Live-Stand aus dem Interim Demand Radar und dem Open Market
-          Akquise Radar.
+          {isInterim
+            ? "Live-Stand aus dem Interim Demand Radar und den Interim-Leads des Open Market Radar."
+            : "Live-Stand aus deinen gewählten Fachbereichen im Open Market Radar."}
         </p>
       </section>
 
-      <section>
-        <SectionHeader
-          title="Interim Demand Radar"
-          href="/interim-radar"
-          linkLabel="Alle Chancen ansehen"
-        />
-        {radarResult.ok ? (
-          <RadarStats records={radarResult.table.records} />
-        ) : (
-          <SetupNotice
-            kind={radarResult.kind}
-            detail={radarResult.kind === "access-error" ? radarResult.detail : undefined}
+      {isInterim && (
+        <section>
+          <SectionHeader
+            title="Interim Demand Radar"
+            href="/interim-radar"
+            linkLabel="Alle Chancen ansehen"
           />
-        )}
-        {zielResult.ok && (
-          <p className="mt-3 text-sm text-neutral-500">
-            Startliste:{" "}
-            <StatusInline records={zielResult.table.records} field="Status" /> ·{" "}
-            <Link href="/interim-zielunternehmen" className="underline">
-              zur Startlisten-Ansicht
-            </Link>
-          </p>
-        )}
-      </section>
+          {radarResult?.ok ? (
+            <RadarStats records={radarResult.table.records} />
+          ) : (
+            radarResult && (
+              <SetupNotice
+                kind={radarResult.kind}
+                detail={radarResult.kind === "access-error" ? radarResult.detail : undefined}
+              />
+            )
+          )}
+          {zielResult?.ok && (
+            <p className="mt-3 text-sm text-neutral-500">
+              Startliste:{" "}
+              <StatusInline records={zielResult.table.records} field="Status" /> ·{" "}
+              <Link href="/interim-zielunternehmen" className="underline">
+                zur Startlisten-Ansicht
+              </Link>
+            </p>
+          )}
+        </section>
+      )}
 
       <section>
         <SectionHeader
@@ -68,7 +86,16 @@ export default async function OverviewPage() {
           href="/open-market"
           linkLabel="Alle Segmente ansehen"
         />
-        <OpenMarketStats segmentResults={segmentResults} />
+        {segments.length === 0 ? (
+          <p className="text-sm text-neutral-500">
+            Du hast noch keine Fachbereiche ausgewählt.{" "}
+            <Link href="/einstellungen" className="underline">
+              Jetzt auswählen →
+            </Link>
+          </p>
+        ) : (
+          <OpenMarketStats segments={segments} segmentResults={segmentResults} />
+        )}
       </section>
 
       <section>
@@ -140,8 +167,10 @@ function StatusInline({
 }
 
 function OpenMarketStats({
+  segments,
   segmentResults,
 }: {
+  segments: OpenMarketSegment[];
   segmentResults: Awaited<ReturnType<typeof loadTab>>[];
 }) {
   const ok = segmentResults.filter((r) => r.ok) as Extract<
@@ -186,7 +215,7 @@ function OpenMarketStats({
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800">
-            {OPEN_MARKET_SEGMENTS.map((seg, i) => {
+            {segments.map((seg, i) => {
               const result = segmentResults[i];
               const records = result.ok ? result.table.records : [];
               const neu = countByField(records, ["Lead-Status"]).get("Neu") ?? 0;

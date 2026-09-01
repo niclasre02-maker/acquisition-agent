@@ -1,11 +1,14 @@
 import { notFound } from "next/navigation";
 import {
+  INTERIM_OPEN_MARKET_SLUGS,
   OPEN_MARKET_META_TABS,
   OPEN_MARKET_SPREADSHEET_ID,
   segmentBySlug,
 } from "@/lib/config";
+import { getPreferences } from "@/lib/preferences";
 import { loadTab } from "@/lib/loadTab";
 import { SetupNotice } from "@/components/SetupNotice";
+import { ScopeNotice } from "@/components/ScopeNotice";
 import { DataTable } from "@/components/DataTable";
 
 export const revalidate = 60;
@@ -36,13 +39,22 @@ export default async function OpenMarketSegmentPage({
     notFound();
   }
 
+  // Meta-Tabs (Suchläufe/Agent State) sind unabhängig vom gewählten Modus
+  // immer sichtbar; nur echte Fachbereichs-Segmente werden gescoped.
+  const prefs = meta ? null : await getPreferences();
+  const inScope =
+    meta !== undefined ||
+    (prefs?.mode === "interim"
+      ? INTERIM_OPEN_MARKET_SLUGS.includes(slug)
+      : (prefs?.branches.includes(slug) ?? false));
+
   const tab = segment?.tab ?? meta!.tab;
   const title = segment?.label ?? meta!.title;
   const description = segment
     ? "Leads aus diesem Fachbereich, inkl. Live-Link-Audit-Status."
     : meta!.description;
 
-  const result = await loadTab(OPEN_MARKET_SPREADSHEET_ID, tab);
+  const result = inScope ? await loadTab(OPEN_MARKET_SPREADSHEET_ID, tab) : null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -52,7 +64,21 @@ export default async function OpenMarketSegmentPage({
         </h1>
         <p className="mt-1 text-sm text-neutral-500">{description}</p>
       </div>
-      {result.ok ? (
+
+      {!inScope && (
+        <ScopeNotice>
+          Dieses Segment ist in deiner aktuellen Auswahl nicht sichtbar.
+        </ScopeNotice>
+      )}
+
+      {inScope && result && !result.ok && (
+        <SetupNotice
+          kind={result.kind}
+          detail={result.kind === "access-error" ? result.detail : undefined}
+        />
+      )}
+
+      {inScope && result && result.ok && (
         <DataTable
           headers={result.table.headers}
           rows={result.table.rows}
@@ -63,11 +89,6 @@ export default async function OpenMarketSegmentPage({
             "Status",
           ]}
           badgeColumns={["Lead-Status", "Status"]}
-        />
-      ) : (
-        <SetupNotice
-          kind={result.kind}
-          detail={result.kind === "access-error" ? result.detail : undefined}
         />
       )}
     </div>
