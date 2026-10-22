@@ -98,6 +98,7 @@ function velanioWorkerPilotRun() {
       }
     });
     if(newRows.length){
+      velanioWorkerEnsureCapacity_(intake,intake.getLastRow()+newRows.length);
       intake.getRange(intake.getLastRow()+1,1,newRows.length,VELANIO_WORKER_INTAKE_HEADER.length).setValues(newRows);
       SpreadsheetApp.flush();
       // Confirm last appended run ID; do not claim run success on missing readback.
@@ -105,6 +106,7 @@ function velanioWorkerPilotRun() {
       if(got.length!==newRows.length || got.some(function(row){return row[0]!==runId;}))
         throw new Error("INTAKE_READBACK_MISMATCH");
     }
+    velanioWorkerEnsureCapacity_(health,health.getLastRow()+logs.length);
     health.getRange(health.getLastRow()+1,1,logs.length,VELANIO_WORKER_HEALTH_HEADER.length).setValues(logs);
     SpreadsheetApp.flush();
     return "WORKER_INTAKE_RUN "+runId+" REVIEW_ROWS="+newRows.length;
@@ -122,6 +124,10 @@ function velanioWorkerPull_(token,owner){
   var body=JSON.parse(response.getContentText());
   if(body.agentKey!==owner)throw new Error("OWNER_MISMATCH");
   return body;
+}
+function velanioWorkerEnsureCapacity_(sheet,requiredLastRow){
+  var capacity=sheet.getMaxRows();
+  if(requiredLastRow>capacity) sheet.insertRowsAfter(capacity,requiredLastRow-capacity+50);
 }
 function velanioWorkerEnsureSheet_(ss,name,header){
   var s=ss.getSheetByName(name);
