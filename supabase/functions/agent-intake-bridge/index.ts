@@ -74,9 +74,9 @@ async function checkOfficialAd(originalUrl:string,expectedTitle:string):Promise<
    }
    // HTML rendered ATS pages are never promoted on HTTP 200 alone. Require title tokens in HTML.
    const titleMatch=hasTitleEvidence(expectedTitle,body.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi," "));
-   return {check_status:titleMatch?"LIVE_CONFIRMED":"NOT_VERIFIABLE",
+   return {check_status:"NOT_VERIFIABLE",
       checked_provider:provider,checked_url:apiUrl,http_status:res.status,
-      source_title_match:titleMatch,reason_code:titleMatch?"HTML_TITLE_PRESENT":"PAGE_SHELL_OR_TITLE_MISSING"};
+      source_title_match:titleMatch,reason_code:titleMatch?"HTML_TITLE_PRESENT_APPLICATION_NOT_CONFIRMED":"PAGE_SHELL_OR_TITLE_MISSING"};
  }catch(e){
   return liveNo("FETCH_ERROR",provider,apiUrl,e instanceof Error&&e.name==="TimeoutError"?"TIMEOUT":"FETCH_FAILED");
  }
