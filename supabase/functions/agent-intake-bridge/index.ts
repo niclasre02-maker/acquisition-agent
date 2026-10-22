@@ -133,6 +133,18 @@ Deno.serve(async (req:Request) => {
   if ((req.headers.get("x-velanio-token")||"")!==TOKEN) return json({error:"UNAUTHORIZED"},401);
   let input:any;
   try { input=await req.json(); } catch { return json({error:"BAD_JSON"},400); }
+  // Durable, non-personal worker activity. It proves a valid worker reached the
+  // bridge, not that a document was published or the run completed successfully.
+  const action=String(input?.action||"");
+  const trackedActions=new Set(["pull","pull_promotable","pull_scoped_promotable","ack_promotion","ack_scoped_promotion"]);
+  if(trackedActions.has(action)){
+    const agent=action==="pull" ? String(input?.agentKey||"").slice(0,59) : null;
+    try{
+      const {error:auditError}=await admin.schema("velanio").from("agent_worker_requests_v1")
+        .insert({action,agent_key:agent,outcome:"AUTHENTICATED_REQUEST"});
+      if(auditError) console.error("WORKER_ACTIVITY_WRITE_FAILED",auditError.code);
+    }catch(e){console.error("WORKER_ACTIVITY_FAILED");}
+  }
 
   if (input?.action==="pull_promotable") {
     // Fully separate from the read-only REVIEW intake. No production writes happen here.
