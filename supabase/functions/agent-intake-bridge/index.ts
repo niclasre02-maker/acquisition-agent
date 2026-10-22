@@ -186,7 +186,44 @@ Deno.serve(async (req:Request) => {
   const owner=String(input?.agentKey||"");
   if (!Object.hasOwn(owners,owner)) return json({error:"INVALID_AGENT_KEY"},400);
   const queryOwner=owners[owner];
-  if (!queryOwner) return json({agentKey:owner,status:"NO_AUTONOMOUS_SOURCE",items:[],qualifiedLeads:0});
+  if(!queryOwner) {
+    // Separate automated ATS discovery for canonical MASTER targets and non-target
+    // Interim/Executive. This is REVIEW intake, NOT a validated or billable lead.
+    const scopeLimit=Math.max(1,Math.min(12,Number(input?.limit)||10));
+    const {data:rows,error:scopeErr}=await admin.schema("velanio")
+      .from("agent_scoped_discovery_safe_v2")
+      .select("discovery_id,owner_agent,lane,company_name,title,location,url,queue_fresh_at,contract_hint,source_country,raw_score,seniority,job_function,first_seen_at,target_name,qualification_status,production_write_allowed")
+      .eq("owner_agent",owner).order("first_seen_at",{ascending:false})
+      .limit(Math.min(45,scopeLimit*3));
+    if(scopeErr){
+      console.error("SCOPED_DISCOVERY_READ",owner,scopeErr.code);
+      return json({agentKey:owner,error:"SCOPED_SOURCE_READ_FAILED"},503);
+    }
+    const items=await Promise.all((rows||[]).slice(0,scopeLimit).map(async x=>{
+      const live=await getOrCheckLive(String(x.discovery_id),String(x.url),String(x.title));
+      return {
+        discoveryId:x.discovery_id,lane:x.lane,company:x.company_name,
+        title:x.title,location:x.location,originalUrl:x.url,
+        queueFreshAt:x.queue_fresh_at,contractHint:x.contract_hint,
+        sourceCountry:x.source_country,rawScore:x.raw_score,
+        qaStatus:"REVIEW_ORIGINAL_AND_SCOPE_UNVERIFIED",qaVersion:"SCOPED-ATS-1.0",
+        qaReasons:["ORIGINAL_JOB_AND_ACTUAL_CONTRACT_REQUIRE_REVIEW","ACCOUNT_ACCESS_AND_OWNER_REQUIRE_REVIEW"],
+        ownershipStatus:owner==="PROD-MASTER"?"EXACT_TARGET_REGISTRY_MATCH":"NON_TARGET_EXACT_REGISTRY_MISS",
+        matchedTargetCompany:x.target_name||null,
+        proposedOwnerAgent:owner,accountRouteBlock:true,
+        liveCheckStatus:live.check_status,liveCheckReason:live.reason_code,
+        liveCheckSource:live.checked_url,
+        productionWriteAllowed:false
+      };
+    }));
+    return json({
+      agentKey:owner,status:"INTAKE_ONLY",items,qualifiedLeads:0,
+      potentialSources:(rows||[]).length,
+      coverage:owner==="PROD-MASTER"?"TARGET_ATS_REVIEW":"B1_B2_EXEC_ATS_REVIEW",
+      excludedCoverage:["B3_NEWS_EVENTS","VERIFIED_DIRECT_DECISION_MAKERS","ACCOUNT_INTERNAL_DNC"],
+      source:"velanio.agent_scoped_discovery_safe_v2"
+    });
+  }
   const limit=Math.max(1,Math.min(15,Number(input?.limit)||10));
   const after=new Date(Date.now()-3*60*60*1000).toISOString();
 
