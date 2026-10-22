@@ -57,15 +57,34 @@ function velanioAutoPublishDryRun() {
 }
 
 function velanioAutoPublishRun() {
-  var lock=LockService.getScriptLock();
-  if(!lock.tryLock(20000)) return "SKIPPED_LOCK; next hourly run retries";
   var started=new Date();
   var runId="AUTO-"+Utilities.formatDate(started,VA_PUBLISH.timezone,"yyyyMMdd-HHmmss");
   var logs=[], created=0, failed=0, pending=0;
+  // Read-only API check happens before the shared script lock. Otherwise other
+  // Velanio workers may silently prevent both telemetry and polling.
+  var token=vaToken_();
+  var ss=SpreadsheetApp.openById(VA_PUBLISH.spreadsheetId);
+  var health=vaHealth_(ss);
+  var preview=vaPost_(token,{action:"pull_promotable",limit:VA_PUBLISH.maxPerRun});
+  if(preview.status!=="READY_STAGE0_ONLY" || !Array.isArray(preview.items))
+    throw new Error("UNEXPECTED_PUBLISH_API_RESPONSE");
+  if(preview.items.length===0) {
+    health.appendRow([runId,"PROD-AUTO-PUBLISH",vaStamp_(started),vaStamp_(new Date()),
+      "NO_READY_CANDIDATES",0,0,0,0,"",
+      "Keine neuen, durch Originalanzeige und Fachfilter freigegebenen Stellen. Keine Writes."]);
+    console.log("AUTO_NO_READY: API OK; HEALTH_LOGGED; "+runId);
+    return "AUTO_NO_READY "+runId+" HEALTH_LOGGED";
+  }
+  var lock=LockService.getScriptLock();
+  if(!lock.tryLock(60000)) {
+    health.appendRow([runId,"PROD-AUTO-PUBLISH",vaStamp_(started),vaStamp_(new Date()),
+      "LOCK_BUSY_RETRY",preview.items.length,0,0,0,"SCRIPT_LOCK_BUSY",
+      "Andere Velanio-Funktion hält die gemeinsame Schreibsperre; nächster Lauf versucht erneut."]);
+    console.warn("AUTO_LOCK_BUSY_RETRY "+runId);
+    return "AUTO_LOCK_BUSY_RETRY "+runId;
+  }
   try {
-    var token=vaToken_();
-    var ss=SpreadsheetApp.openById(VA_PUBLISH.spreadsheetId);
-    var health=vaHealth_(ss);
+    // Recheck the live eligibility gate while holding the write lock.
     var api=vaPost_(token,{action:"pull_promotable",limit:VA_PUBLISH.maxPerRun});
     if(api.status!=="READY_STAGE0_ONLY" || !Array.isArray(api.items))
       throw new Error("UNEXPECTED_PUBLISH_API_RESPONSE");
@@ -174,7 +193,7 @@ function vaValidate_(d){
     throw new Error("NOT_APPROVED_FOR_STAGE0");
   if(!VA_PUBLISH.lanes[d.lane]||!/^https:\/\//.test(String(d.originalUrl||"")))
     throw new Error("SOURCE_OR_LANE_INVALID");
-  if(!/^(greenhouse|smartrecruiters)$/.test(String(d.provider||"")))
+  if(!/^(greenhouse|smartrecruiters|personio)$/.test(String(d.provider||"")))
     throw new Error("OFFICIAL_ATS_NOT_CONFIRMED");
   if(!/^sd-[a-z0-9]{30,65}$/.test(String(d.discoveryId||"")))
     throw new Error("BAD_DISCOVERY_ID");
