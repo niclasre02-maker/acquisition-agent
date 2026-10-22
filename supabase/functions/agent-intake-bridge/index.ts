@@ -204,6 +204,75 @@ Deno.serve(async (req:Request) => {
     return json({status:"SHEET_PUBLISHED_PENDING_SYNC",discoveryId,sourceTab});
   }
 
+
+  if(input?.action==="pull_scoped_promotable"){
+    const n=Math.max(1,Math.min(8,Number(input?.limit)||6));
+    const {data,error}=await admin.schema("velanio").from("agent_scoped_publish_ready_v1")
+      .select("discovery_id,owner_agent,lane,company_name,title,location,original_url,contract_hint,source_country,raw_score,seniority,job_function,first_seen_at,target_name,live_checked_at,provider,live_reason,publishing_scope")
+      .order("first_seen_at",{ascending:false}).limit(40);
+    if(error){console.error("SCOPED_PUBLISH_VIEW",error.code);return json({error:"SCOPED_GATE_READ_FAILED"},503);}
+    let seen=new Set<string>();
+    if(data?.length){
+      const {data:r,error:e}=await admin.schema("velanio").from("agent_scoped_publish_receipts_v1")
+        .select("discovery_id").in("discovery_id",data.map(x=>x.discovery_id));
+      if(e)return json({error:"SCOPED_RECEIPTS_READ_FAILED"},503);
+      seen=new Set((r||[]).map(x=>String(x.discovery_id)));
+    }
+    const items=(data||[]).filter(x=>!seen.has(String(x.discovery_id))).slice(0,n).map(x=>({
+      discoveryId:x.discovery_id,agentKey:x.owner_agent,laneScope:x.lane,
+      company:x.company_name,title:x.title,location:x.location,
+      originalUrl:x.original_url,contractHint:x.contract_hint,
+      rawScore:x.raw_score,seniority:x.seniority,jobFunction:x.job_function,
+      targetName:x.target_name||null,liveCheckedAt:x.live_checked_at,
+      provider:x.provider,liveReason:x.live_reason,
+      publishingScope:"STAGE0_ONLY",outreachAllowed:false
+    }));
+    return json({status:"SCOPED_STAGE0_READY",items,
+      potentialOnGate:(data||[]).length,qualifiedMandates:0});
+  }
+  if(input?.action==="ack_scoped_promotion"){
+    const r=input?.receipt||{};
+    const discoveryId=String(r.discoveryId||"");
+    const sourceKey=String(r.sourceKey||"");
+    const sourceTab=String(r.sourceTab||"");
+    const signalId=String(r.signalId||"");
+    const opportunityId=String(r.opportunityId||"");
+    if(!/^sd-[a-z0-9]{30,65}$/.test(discoveryId)
+      || !/^[a-z0-9|_-]{12,150}$/.test(sourceKey)
+      || !/^SIG-SCOPE-[a-f0-9]{20}$/.test(signalId)
+      || !/^DEAT-OPP-SCOPE-[a-f0-9]{20}$/.test(opportunityId))
+      return json({error:"BAD_SCOPED_RECEIPT"},400);
+    const {data:gate,error:gateErr}=await admin.schema("velanio").from("agent_scoped_publish_ready_v1")
+      .select("owner_agent,lane,job_function,contract_hint")
+      .eq("discovery_id",discoveryId).maybeSingle();
+    if(gateErr)return json({error:"SCOPED_GATE_RECHECK_FAILED"},503);
+    if(!gate)return json({error:"SCOPED_NOT_CURRENTLY_ELIGIBLE"},409);
+    const fnTabs:Record<string,string>={
+      "Finance":"03 Finance","Financial Services":"04 Financial Services","Life Sciences":"05 Life Sciences",
+      "IT & Digital":"06 IT & Digital","Sales & Marketing":"07 DEAT Sales & Marketing – Consumer Goods & Handel",
+      "Engineering":"08 Engineering","HR & People":"10 HR & People","Legal":"11 Legal"
+    };
+    const expected=gate.owner_agent==="PROD-MASTER"
+      ? (gate.contract_hint==="INTERIM_B2B"?"01 Interim B2B":gate.contract_hint==="FIXED_TERM"?"02 Befristet Interim":fnTabs[gate.job_function])
+      : (gate.lane==="B1_EXPLICIT_INTERIM_FREELANCE"?"01 Interim B2B":
+        gate.lane==="B2_EXPLICIT_FIXED_TERM"?"02 Befristet Interim":
+        gate.lane==="EXEC_DIRECT_HIRING"?"25 Executive Demand Radar":undefined);
+    if(!expected || expected!==sourceTab)return json({error:"SCOPED_WRONG_SOURCE_TAB"},409);
+    const {data:old,error:oldErr}=await admin.schema("velanio").from("agent_scoped_publish_receipts_v1")
+      .select("source_key,source_tab,signal_id,opportunity_id").eq("discovery_id",discoveryId).maybeSingle();
+    if(oldErr)return json({error:"SCOPED_RECEIPT_PRECHECK_FAILED"},503);
+    if(old && (old.source_key!==sourceKey ||old.source_tab!==sourceTab||
+       old.signal_id!==signalId||old.opportunity_id!==opportunityId))
+      return json({error:"SCOPED_RECEIPT_CONFLICT"},409);
+    const {error:e}=await admin.schema("velanio").from("agent_scoped_publish_receipts_v1")
+      .upsert({discovery_id:discoveryId,source_key:sourceKey,source_tab:sourceTab,
+        signal_id:signalId,opportunity_id:opportunityId,
+        status:"SHEET_PUBLISHED_PENDING_SYNC",reported_at:new Date().toISOString()},
+        {onConflict:"discovery_id"});
+    if(e){console.error("SCOPED_RECEIPT_WRITE",e.code);return json({error:"SCOPED_RECEIPT_WRITE_FAILED"},503);}
+    return json({status:"SCOPED_SHEET_PUBLISHED_PENDING_SYNC",discoveryId,sourceTab});
+  }
+
   if (input?.action!=="pull") return json({error:"ACTION_NOT_SUPPORTED"},400);
   const owner=String(input?.agentKey||"");
   if (!Object.hasOwn(owners,owner)) return json({error:"INVALID_AGENT_KEY"},400);
