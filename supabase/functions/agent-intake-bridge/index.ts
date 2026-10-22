@@ -219,7 +219,7 @@ Deno.serve(async (req:Request) => {
 
   if(input?.action==="pull_scoped_promotable"){
     const n=Math.max(1,Math.min(8,Number(input?.limit)||6));
-    const {data,error}=await admin.schema("velanio").from("agent_scoped_publish_ready_v1")
+    const {data,error}=await admin.schema("velanio").from("agent_scoped_publish_routable_v1")
       .select("discovery_id,owner_agent,lane,company_name,title,location,original_url,contract_hint,source_country,raw_score,seniority,job_function,first_seen_at,target_name,live_checked_at,provider,live_reason,publishing_scope")
       .order("first_seen_at",{ascending:false}).limit(40);
     if(error){console.error("SCOPED_PUBLISH_VIEW",error.code);return json({error:"SCOPED_GATE_READ_FAILED"},503);}
@@ -254,7 +254,7 @@ Deno.serve(async (req:Request) => {
       || !/^SIG-SCOPE-[a-f0-9]{20}$/.test(signalId)
       || !/^DEAT-OPP-SCOPE-[a-f0-9]{20}$/.test(opportunityId))
       return json({error:"BAD_SCOPED_RECEIPT"},400);
-    const {data:gate,error:gateErr}=await admin.schema("velanio").from("agent_scoped_publish_ready_v1")
+    const {data:gate,error:gateErr}=await admin.schema("velanio").from("agent_scoped_publish_routable_v1")
       .select("owner_agent,lane,job_function,contract_hint")
       .eq("discovery_id",discoveryId).maybeSingle();
     if(gateErr)return json({error:"SCOPED_GATE_RECHECK_FAILED"},503);
