@@ -136,7 +136,7 @@ Deno.serve(async (req:Request) => {
   });
   const ids=[...new Set(candidates.map(x=>x.discovery_id))];
   const {data:qualified,error:gateError}=await admin.schema("velanio").from("agent_candidate_review_readonly_v1")
-    .select("discovery_id,status,block_reasons,queue_fresh_at,evaluated_at,production_write_allowed")
+    .select("discovery_id,status,block_reasons,original_url,job_title,company_name,evaluated_at,production_write_allowed")
     .in("discovery_id",ids);
   if(gateError){
     console.error("AGENT_QUAL_GATE_READ",owner,gateError.code);
@@ -148,7 +148,7 @@ Deno.serve(async (req:Request) => {
   for(const x of candidates){
     const qa=gateById.get(String(x.discovery_id));
     const gateFresh=qa && new Date(qa.evaluated_at).getTime()>Date.now()-3*60*60*1000;
-    const sourceCovered=qa && new Date(qa.queue_fresh_at).getTime()>=new Date(x.queue_fresh_at).getTime()-1000;
+    const sourceCovered=qa && qa.original_url===x.url && qa.job_title===x.title && qa.company_name===x.company_name;
     if(!qa || !gateFresh || !sourceCovered){heldForGate++;continue;}
     if(qa.production_write_allowed || qa.status==="BLOCKED" || !String(qa.status).startsWith("REVIEW_")){
       blockedByGate++;continue;
