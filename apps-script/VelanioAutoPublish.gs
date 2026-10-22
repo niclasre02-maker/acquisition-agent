@@ -200,6 +200,11 @@ function vaValidate_(d){
   if(!String(d.company||"").trim()||!String(d.title||"").trim())
     throw new Error("EMPLOYER_OR_TITLE_MISSING");
   if(/[\/|]/.test(String(d.company||"")))throw new Error("COMPOSITE_ACCOUNT_HOLD");
+  // Leadership extracted from "HR-Leitung" must not elevate an assistant/generalist.
+  if(d.lane==="HR & People" && /generalist\s*\/\s*assistenz/i.test(String(d.title||"")))
+    throw new Error("SENIORITY_TITLE_FALSE_POSITIVE");
+  if(!Number.isFinite(new Date(d.liveCheckedAt).getTime()))
+    throw new Error("LIVE_CHECK_INVALID");
   if(new Date(d.liveCheckedAt).getTime()<Date.now()-12*3600000)
     throw new Error("LIVE_CHECK_STALE");
 }
