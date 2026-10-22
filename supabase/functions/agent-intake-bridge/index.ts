@@ -111,6 +111,77 @@ Deno.serve(async (req:Request) => {
   if ((req.headers.get("x-velanio-token")||"")!==TOKEN) return json({error:"UNAUTHORIZED"},401);
   let input:any;
   try { input=await req.json(); } catch { return json({error:"BAD_JSON"},400); }
+
+  if (input?.action==="pull_promotable") {
+    // Fully separate from the read-only REVIEW intake. No production writes happen here.
+    const reqLimit=Math.max(1,Math.min(12,Number(input?.limit)||8));
+    const {data,error}=await admin.schema("velanio").from("agent_stage0_publish_ready_v1")
+      .select("discovery_id,owner_agent,lane,company_name,title,location,company_industry,company_sector,seniority,contract_hint,source_country,classified_geo,raw_score,original_url,ats,source_id,description,first_seen_at,queue_fresh_at,qualification_status,ownership_status,proposed_owner_agent,live_status,checked_provider,checked_at,publish_scope")
+      .order("raw_score",{ascending:false}).limit(40);
+    if(error){console.error("PROMOTABLE_VIEW_READ",error.code);return json({error:"PUBLISH_GATE_READ_FAILED"},503);}
+    const ids=(data||[]).map(x=>x.discovery_id);
+    let already=new Set<string>();
+    if(ids.length){
+      const {data:seen,error:seenErr}=await admin.schema("velanio").from("agent_stage0_publish_receipts_v1")
+        .select("discovery_id").in("discovery_id",ids);
+      if(seenErr){console.error("PUBLISH_RECEIPT_READ",seenErr.code);return json({error:"PUBLISH_RECEIPT_READ_FAILED"},503);}
+      already=new Set((seen||[]).map(x=>String(x.discovery_id)));
+    }
+    const docs=(data||[]).filter(x=>!already.has(String(x.discovery_id))).slice(0,reqLimit).map(x=>({
+      discoveryId:x.discovery_id,agentKey:owners["PROD-SCOUT-"+(x.owner_agent==="CONSUMER"?"COM":x.owner_agent)]?"PROD-SCOUT-"+(x.owner_agent==="CONSUMER"?"COM":x.owner_agent):x.proposed_owner_agent,
+      lane:x.lane,company:x.company_name,title:x.title,location:x.location,
+      industry:x.company_industry||x.company_sector||"",
+      seniority:x.seniority,contractHint:x.contract_hint,
+      originalUrl:x.original_url,description:String(x.description||"").slice(0,7000),
+      firstSeenAt:x.first_seen_at,rawScore:x.raw_score,
+      liveCheckedAt:x.checked_at,provider:x.checked_provider,
+      qaStatus:x.qualification_status,ownershipStatus:x.ownership_status,
+      publishingScope:"STAGE0_ONLY",outreachAllowed:false
+    }));
+    return json({status:"READY_STAGE0_ONLY",items:docs,produced:docs.length,
+      candidatesOnGate:(data||[]).length,qualifiedLeads:0,
+      notes:"Sheet worker must exact-dedupe, write Fach/20/14, verify readback, then report receipt. Outreach requires internal approval."});
+  }
+  if(input?.action==="ack_promotion"){
+    const row=input?.receipt||{};
+    const discoveryId=String(row.discoveryId||"");
+    const dedupeKey=String(row.dedupeKey||"");
+    const opportunityId=String(row.opportunityId||"");
+    const signalId=String(row.signalId||"");
+    const sourceTab=String(row.sourceTab||"");
+    const tabs=new Set(["03 Finance","04 Financial Services","05 Life Sciences","06 IT & Digital",
+      "07 DEAT Sales & Marketing – Consumer Goods & Handel","08 Engineering","10 HR & People","11 Legal"]);
+    if(!/^sd-[a-z0-9]{30,65}$/.test(discoveryId) ||
+       !/^[a-z0-9|_-]{12,150}$/.test(dedupeKey) ||
+       !/^DEAT-OPP-AUTO-[a-f0-9]{20}$/.test(opportunityId) ||
+       !/^SIG-AUTO-[a-f0-9]{20}$/.test(signalId) || !tabs.has(sourceTab)){
+      return json({error:"INVALID_RECEIPT"},400);
+    }
+    const {data:eligible,error:checkErr}=await admin.schema("velanio")
+      .from("agent_stage0_publish_ready_v1").select("discovery_id,lane")
+      .eq("discovery_id",discoveryId).maybeSingle();
+    if(checkErr)return json({error:"ELIGIBILITY_RECHECK_FAILED"},503);
+    if(!eligible)return json({error:"NO_LONGER_PUBLISHABLE"},409);
+    const ownerToTab:Record<string,string>={"Finance":"03 Finance","Financial Services":"04 Financial Services",
+      "Legal":"11 Legal","Life Sciences":"05 Life Sciences","IT & Digital":"06 IT & Digital",
+      "Engineering":"08 Engineering","HR & People":"10 HR & People",
+      "Sales & Marketing":"07 DEAT Sales & Marketing – Consumer Goods & Handel"};
+    if(ownerToTab[eligible.lane]!==sourceTab)return json({error:"SOURCE_TAB_WRONG"},409);
+    const {data:old,error:oldErr}=await admin.schema("velanio")
+      .from("agent_stage0_publish_receipts_v1")
+      .select("dedupe_key,opportunity_id,signal_id,source_tab").eq("discovery_id",discoveryId).maybeSingle();
+    if(oldErr)return json({error:"RECEIPT_PRECHECK_FAILED"},503);
+    if(old && (old.dedupe_key!==dedupeKey || old.opportunity_id!==opportunityId ||
+      old.signal_id!==signalId || old.source_tab!==sourceTab))return json({error:"RECEIPT_CONFLICT"},409);
+    const {error:ackErr}=await admin.schema("velanio").from("agent_stage0_publish_receipts_v1")
+      .upsert({discovery_id:discoveryId,dedupe_key:dedupeKey,
+        opportunity_id:opportunityId,signal_id:signalId,source_tab:sourceTab,
+        stage:"SHEET_PUBLISHED_PENDING_SYNC",reported_at:new Date().toISOString()},
+        {onConflict:"discovery_id"});
+    if(ackErr){console.error("PUBLISH_RECEIPT_WRITE",ackErr.code);return json({error:"RECEIPT_WRITE_FAILED"},503);}
+    return json({status:"SHEET_PUBLISHED_PENDING_SYNC",discoveryId,sourceTab});
+  }
+
   if (input?.action!=="pull") return json({error:"ACTION_NOT_SUPPORTED"},400);
   const owner=String(input?.agentKey||"");
   if (!Object.hasOwn(owners,owner)) return json({error:"INVALID_AGENT_KEY"},400);
