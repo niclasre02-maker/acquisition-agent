@@ -199,7 +199,12 @@ Deno.serve(async (req:Request) => {
       console.error("SCOPED_DISCOVERY_READ",owner,scopeErr.code);
       return json({agentKey:owner,error:"SCOPED_SOURCE_READ_FAILED"},503);
     }
-    const items=await Promise.all((rows||[]).slice(0,scopeLimit).map(async x=>{
+    // Rotate candidate batches across hours so that stable old discoveries do not
+    // starve the last MASTER/Interim records. Each candidate remains REVIEW-only.
+    const scopedRows=rows||[];
+    const offset=scopedRows.length?(Math.floor(Date.now()/3600000)*scopeLimit)%scopedRows.length:0;
+    const rotated=scopedRows.slice(offset).concat(scopedRows.slice(0,offset)).slice(0,scopeLimit);
+    const items=await Promise.all(rotated.map(async x=>{
       const live=await getOrCheckLive(String(x.discovery_id),String(x.url),String(x.title));
       return {
         discoveryId:x.discovery_id,lane:x.lane,company:x.company_name,
