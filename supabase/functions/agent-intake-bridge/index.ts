@@ -230,7 +230,12 @@ Deno.serve(async (req:Request) => {
       if(e)return json({error:"SCOPED_RECEIPTS_READ_FAILED"},503);
       seen=new Set((r||[]).map(x=>String(x.discovery_id)));
     }
-    const items=(data||[]).filter(x=>!seen.has(String(x.discovery_id))).slice(0,n).map(x=>({
+    // Backward compatibility safety: older Apps Script versions target the
+    // IMPORTRANGE Executive mirror and can corrupt it. Only source-aware v2
+    // publishers may receive EXEC_DIRECT_HIRING. Other categories remain live.
+    const execSourceAware=input?.clientVersion==="SCOPED_SOURCE_V2";
+    const eligible=(data||[]).filter(x=>execSourceAware || x.lane!=="EXEC_DIRECT_HIRING");
+    const items=eligible.filter(x=>!seen.has(String(x.discovery_id))).slice(0,n).map(x=>({
       discoveryId:x.discovery_id,agentKey:x.owner_agent,laneScope:x.lane,
       company:x.company_name,title:x.title,location:x.location,
       originalUrl:x.original_url,contractHint:x.contract_hint,
@@ -240,7 +245,7 @@ Deno.serve(async (req:Request) => {
       publishingScope:"STAGE0_ONLY",outreachAllowed:false
     }));
     return json({status:"SCOPED_STAGE0_READY",items,
-      potentialOnGate:(data||[]).length,qualifiedMandates:0});
+      potentialOnGate:eligible.length,qualifiedMandates:0});
   }
   if(input?.action==="ack_scoped_promotion"){
     const r=input?.receipt||{};
