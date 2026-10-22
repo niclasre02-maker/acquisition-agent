@@ -47,7 +47,7 @@ async function checkOfficialAd(originalUrl:string,expectedTitle:string):Promise<
  }else if(host==="jobs.smartrecruiters.com" && segs.length>=2 && /^\d{9,}$/.test(segs[1])){
    provider="smartrecruiters";apiUrl="https://api.smartrecruiters.com/v1/companies/"+encodeURIComponent(segs[0])+"/postings/"+encodeURIComponent(segs[1]);
  }else if(/^[a-z0-9-]+\.jobs\.personio\.(?:de|com)$/.test(host) && segs.length>=2 && segs[0]==="job" && /^\d{6,}$/.test(segs[1])){
-   provider="personio";apiUrl=originalUrl;
+   provider="personio";apiUrl="https://"+host+"/xml?language=de";
  }else if(host==="jobs.lever.co" && segs.length>=2 && /^[0-9a-f-]{16,36}$/i.test(segs[1])){
    provider="lever";apiUrl=originalUrl;
  }else{
@@ -55,9 +55,10 @@ async function checkOfficialAd(originalUrl:string,expectedTitle:string):Promise<
  }
  try{
    const res=await fetch(apiUrl,{method:"GET",redirect:"manual",
-    headers:{"accept":provider==="personio"||provider==="lever"?"text/html,application/xhtml+xml":"application/json"},
+    headers:{"accept":provider==="personio"?"application/xml,text/xml":provider==="lever"?"text/html,application/xhtml+xml":"application/json"},
     signal:AbortSignal.timeout(6000)});
    if(res.status>=300 && res.status<400)return liveNo("LIVE_URL_REDIRECT",provider,apiUrl,"REDIRECT_NEEDS_REVIEW",res.status);
+   if((res.status===404||res.status===410)&&provider==="personio")return liveNo("NOT_VERIFIABLE",provider,apiUrl,"OFFICIAL_XML_FEED_NOT_AVAILABLE",res.status);
    if(res.status===404||res.status===410)return liveNo("LIVE_NOT_FOUND",provider,apiUrl,"OFFICIAL_SOURCE_NOT_FOUND",res.status);
    if(!res.ok)return liveNo("NOT_VERIFIABLE",provider,apiUrl,"HTTP_NOT_OK",res.status);
    const body=(await res.text()).slice(0,650000);
@@ -72,6 +73,27 @@ async function checkOfficialAd(originalUrl:string,expectedTitle:string):Promise<
        checked_provider:provider,checked_url:apiUrl,http_status:res.status,
        source_title_match:titleMatch,reason_code:!idMatch?"ATS_ID_NOT_CONFIRMED":titleMatch?"OFFICIAL_ACTIVE_POSTING":"OFFICIAL_TITLE_NOT_MATCHED"};
    }
+   if(provider==="personio"){
+     // Personio's public /xml feed contains *current* published positions with
+     // exact job IDs. A public HTML page alone is not proof of a live vacancy.
+     if(!/<workzag-jobs(?:\s|>)/i.test(body))
+       return liveNo("NOT_VERIFIABLE",provider,apiUrl,"OFFICIAL_XML_FEED_INVALID",res.status);
+     const requestedId=segs[1];
+     const positions=body.match(/<position(?:\s[^>]*)?>[\s\S]*?<\/position>/gi)||[];
+     if(!positions.length)return liveNo("NOT_VERIFIABLE",provider,apiUrl,"OFFICIAL_XML_FEED_EMPTY_OR_UNAVAILABLE",res.status);
+     const matching=positions.find(x=>{
+       const id=x.match(/<id>(\d+)<\/id>/i);
+       return id&&id[1]===requestedId;
+     });
+     if(!matching)return liveNo("LIVE_NOT_FOUND",provider,apiUrl,"JOB_ID_ABSENT_FROM_OFFICIAL_XML",res.status);
+     const name=(matching.match(/<name>([\s\S]*?)<\/name>/i)||[])[1]||"";
+     const employment=(matching.match(/<employmentType>([\s\S]*?)<\/employmentType>/i)||[])[1]||"unknown";
+     const titleMatch=hasTitleEvidence(expectedTitle,name);
+     return {check_status:titleMatch?"LIVE_CONFIRMED":"TITLE_MISMATCH",
+       checked_provider:provider,checked_url:apiUrl,http_status:res.status,
+       source_title_match:titleMatch,
+       reason_code:titleMatch?"OFFICIAL_XML_JOB_AND_TITLE_MATCH_"+employment.toUpperCase():"OFFICIAL_XML_JOB_TITLE_MISMATCH"};
+   }
    // HTML rendered ATS pages are never promoted on HTTP 200 alone. Require title tokens in HTML.
    const titleMatch=hasTitleEvidence(expectedTitle,body.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi," "));
    return {check_status:"NOT_VERIFIABLE",
@@ -85,7 +107,7 @@ async function getOrCheckLive(discoveryId:string,originalUrl:string,title:string
  const {data:old}=await admin.schema("velanio").from("agent_original_livecheck_v1")
   .select("check_status,checked_provider,checked_url,http_status,source_title_match,reason_code,checked_at,original_url")
   .eq("discovery_id",discoveryId).maybeSingle();
- if(old && old.original_url===originalUrl && old.reason_code!=="INVALID_URL" && Date.now()-new Date(old.checked_at).getTime()<6*3600000){
+ if(old && old.original_url===originalUrl && old.reason_code!=="INVALID_URL" && !(old.checked_provider==="personio" && old.check_status!=="LIVE_CONFIRMED") && Date.now()-new Date(old.checked_at).getTime()<6*3600000){
   return {check_status:old.check_status,checked_provider:old.checked_provider,
    checked_url:old.checked_url,http_status:old.http_status,
    source_title_match:old.source_title_match,reason_code:old.reason_code};
