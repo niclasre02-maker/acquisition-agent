@@ -37,6 +37,9 @@ function velanioAutoPublishInstall() {
   if(!token) throw new Error("AGENT_WORKER_TOKEN oder VELANIO_IMPORT_TOKEN fehlt in Script Properties.");
   var ss=SpreadsheetApp.openById(VA_PUBLISH.spreadsheetId);
   vaHealth_(ss); // Verify existing health tab and header. No write to sync code.
+  var preflight=vaPost_(token,{action:"pull_promotable",limit:1});
+  if(preflight.status!=="READY_STAGE0_ONLY" || !Array.isArray(preflight.items))
+    throw new Error("AUTO_PUBLISH_PREFLIGHT_FAILED");
   var triggers=ScriptApp.getProjectTriggers().filter(function(t){
     return t.getHandlerFunction()==="velanioAutoPublishRun";
   });
@@ -44,6 +47,15 @@ function velanioAutoPublishInstall() {
     ScriptApp.newTrigger("velanioAutoPublishRun").timeBased().everyHours(1).create();
   return "AUTO_PUBLISH_READY: eigener stündlicher Stage-0-Trigger, keine CRM-/Outreach-Freigabe.";
 }
+function velanioAutoPublishDryRun() {
+  var token=vaToken_();
+  var payload=vaPost_(token,{action:"pull_promotable",limit:VA_PUBLISH.maxPerRun});
+  if(payload.status!=="READY_STAGE0_ONLY")throw new Error("AUTO_PUBLISH_PREFLIGHT_FAILED");
+  return "AUTO_PUBLISH_DRYRUN ready="+payload.items.length+
+    " candidatesOnGate="+payload.candidatesOnGate+
+    "; ZERO Sheet Writes; nicht mit qualifizierten Mandaten gleichzusetzen.";
+}
+
 function velanioAutoPublishRun() {
   var lock=LockService.getScriptLock();
   if(!lock.tryLock(20000)) return "SKIPPED_LOCK; next hourly run retries";
