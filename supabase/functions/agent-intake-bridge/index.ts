@@ -136,14 +136,14 @@ Deno.serve(async (req:Request) => {
   });
   const ids=[...new Set(candidates.map(x=>x.discovery_id))];
   const {data:qualified,error:gateError}=await admin.schema("velanio").from("agent_candidate_review_readonly_v1")
-    .select("discovery_id,status,block_reasons,original_url,job_title,company_name,evaluated_at,production_write_allowed")
+    .select("discovery_id,status,block_reasons,original_url,job_title,company_name,evaluated_at,production_write_allowed,ownership_status,proposed_owner_agent,ownership_checked_at,account_route_block")
     .in("discovery_id",ids);
   if(gateError){
     console.error("AGENT_QUAL_GATE_READ",owner,gateError.code);
     return json({agentKey:owner,error:"QUALIFICATION_GATE_READ_FAILED"},503);
   }
   const gateById=new Map((qualified||[]).map(x=>[String(x.discovery_id),x]));
-  let heldForGate=0,blockedByGate=0;
+  let heldForGate=0,blockedByGate=0,heldForOwnership=0,divertedMaster=0;
   const items=[];
   for(const x of candidates){
     const qa=gateById.get(String(x.discovery_id));
@@ -153,12 +153,31 @@ Deno.serve(async (req:Request) => {
     if(qa.production_write_allowed || qa.status==="BLOCKED" || !String(qa.status).startsWith("REVIEW_")){
       blockedByGate++;continue;
     }
+    // Every candidate needs a current account ownership check before it reaches REVIEW.
+    if(!qa.ownership_status || !qa.ownership_checked_at ||
+       Date.now()-new Date(qa.ownership_checked_at).getTime()>3*60*60*1000){
+      heldForOwnership++;continue;
+    }
+    // MASTER-only target accounts and excluded targets must never enter a perm scout's intake.
+    if(qa.ownership_status==="MASTER_EXACT_TARGET"){
+      divertedMaster++;continue;
+    }
+    if(qa.ownership_status==="TARGET_LIST_EXCLUDED_HOLD" ||
+       qa.ownership_status==="TARGET_LIST_CONFLICT_HOLD"){
+      heldForOwnership++;continue;
+    }
+    const ownershipNeedsReview=qa.ownership_status!=="NO_EXACT_TARGET_MATCH_REVIEW";
+    if(!ownershipNeedsReview && qa.proposed_owner_agent!==owner){
+      heldForOwnership++;continue;
+    }
     items.push({
       discoveryId:x.discovery_id,lane:x.lane,company:x.company_name,title:x.title,
       location:x.location,originalUrl:x.url,queueFreshAt:x.queue_fresh_at,
       contractHint:x.contract_hint,sourceCountry:x.source_country,
-      qaStatus:qa.status,qaVersion:"QG-1.0",qaReasons:qa.block_reasons,
-      productionWriteAllowed:false
+      qaStatus:ownershipNeedsReview?"REVIEW_OWNERSHIP_HOLD":qa.status,
+      qaVersion:"QG-1.0",qaReasons:qa.block_reasons,
+      ownershipStatus:qa.ownership_status,proposedOwnerAgent:qa.proposed_owner_agent||"",
+      accountRouteBlock:true,productionWriteAllowed:false
     });
     if(items.length>=limit)break;
   }
@@ -170,6 +189,6 @@ Deno.serve(async (req:Request) => {
   }));
   return json({
     agentKey:owner,status:"INTAKE_ONLY",items:auditedItems,qualifiedLeads:0,
-    heldForGate,blockedByGate,source:"velanio.perm_search_queue"
+    heldForGate,blockedByGate,heldForOwnership,divertedMaster,source:"velanio.perm_search_queue"
   });
 });
