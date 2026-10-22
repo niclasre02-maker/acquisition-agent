@@ -2,10 +2,10 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.117.2";
 
 // Read-only bridge for an Apps Script intake worker. No production lead writes.
-const URL = Deno.env.get("SUPABASE_URL") || "";
+const SUPABASE_BASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 const TOKEN = Deno.env.get("VELANIO_IMPORT_TOKEN") || "";
-const admin = createClient(URL,KEY,{db:{schema:"velanio"},auth:{persistSession:false}});
+const admin = createClient(SUPABASE_BASE_URL,KEY,{db:{schema:"velanio"},auth:{persistSession:false}});
 const owners:Record<string,string | null> = {
   "PROD-SCOUT-COM":"CONSUMER",
   "PROD-SCOUT-FIN":"FIN",
@@ -85,7 +85,7 @@ async function getOrCheckLive(discoveryId:string,originalUrl:string,title:string
  const {data:old}=await admin.schema("velanio").from("agent_original_livecheck_v1")
   .select("check_status,checked_provider,checked_url,http_status,source_title_match,reason_code,checked_at,original_url")
   .eq("discovery_id",discoveryId).maybeSingle();
- if(old && old.original_url===originalUrl && Date.now()-new Date(old.checked_at).getTime()<6*3600000){
+ if(old && old.original_url===originalUrl && old.reason_code!=="INVALID_URL" && Date.now()-new Date(old.checked_at).getTime()<6*3600000){
   return {check_status:old.check_status,checked_provider:old.checked_provider,
    checked_url:old.checked_url,http_status:old.http_status,
    source_title_match:old.source_title_match,reason_code:old.reason_code};
@@ -107,7 +107,7 @@ async function getOrCheckLive(discoveryId:string,originalUrl:string,title:string
 
 Deno.serve(async (req:Request) => {
   if (req.method!=="POST") return json({error:"METHOD_NOT_ALLOWED"},405);
-  if (!TOKEN || !KEY || !URL) return json({error:"WORKER_NOT_CONFIGURED"},503);
+  if (!TOKEN || !KEY || !SUPABASE_BASE_URL) return json({error:"WORKER_NOT_CONFIGURED"},503);
   if ((req.headers.get("x-velanio-token")||"")!==TOKEN) return json({error:"UNAUTHORIZED"},401);
   let input:any;
   try { input=await req.json(); } catch { return json({error:"BAD_JSON"},400); }
