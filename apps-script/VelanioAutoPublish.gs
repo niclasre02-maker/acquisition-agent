@@ -230,9 +230,31 @@ function vaExistingKey_(sheet,col,key){
  for(var i=0;i<v.length;i++)if(v[i][0]===key)return i+2;
  return 0;
 }
+function vaRecoverPartialSource_(ss,name,row,ids,doc){
+ var sheet=vaSheet_(ss,name);
+ var headers=sheet.getRange(1,1,1,sheet.getLastColumn()).getDisplayValues()[0];
+ var values=sheet.getRange(row,1,1,headers.length).getDisplayValues()[0];
+ var keyCol=headers.indexOf("Dedupe Key"),urlCol=headers.indexOf("Original- / ATS-Link");
+ if(keyCol!==0||urlCol<0)throw new Error("SOURCE_HEADERS_CHANGED_"+name);
+ if(values[0]!==ids.key||values[1]!==doc.company||values[2]!==doc.title||
+    values[3]!==doc.lane)throw new Error("SOURCE_PARTIAL_IDENTITY_CONFLICT_"+name);
+ if(vaCanon_(values[urlCol])===vaCanon_(doc.originalUrl))return;
+ // The legacy script could leave only A:F written before failing on
+ // the strict G (Einstufung) dropdown. Repair exactly this known case.
+ if(values[urlCol]||values.slice(6).some(function(v){return String(v||"").trim()!=="";}))
+   throw new Error("SOURCE_EXISTING_ROW_CONFLICT_"+name);
+ var data=vaSource_(doc,ids);
+ var mapped=headers.map(function(h){
+   return Object.prototype.hasOwnProperty.call(data,h)?vaCell_(data[h]):"";
+ });
+ if(mapped[0]!==ids.key||mapped[1]!==doc.company||mapped[2]!==doc.title)
+   throw new Error("SOURCE_REPAIR_MAPPING_CHANGED_"+name);
+ sheet.getRange(row,7,1,headers.length-6).setValues([mapped.slice(6)]);
+ SpreadsheetApp.flush();
+ vaVerifyRow_(sheet,row,"Dedupe Key",ids.key,"Original- / ATS-Link",doc.originalUrl);
+}
 function vaVerifyMatching_(ss,tab,ids,doc,existingSource,existingCentral,existingDeal){
- if(existingSource)vaVerifyRow_(vaSheet_(ss,tab),existingSource,"Dedupe Key",ids.key,
-    "Original- / ATS-Link",doc.originalUrl);
+ if(existingSource)vaRecoverPartialSource_(ss,tab,existingSource,ids,doc);
  if(existingCentral)vaVerifyRow_(vaSheet_(ss,VA_PUBLISH.centralTab),existingCentral,
     "Signal ID",ids.signalId,"Source URL",doc.originalUrl);
  if(existingDeal)vaVerifyRow_(vaSheet_(ss,VA_PUBLISH.dealTab),existingDeal,
@@ -257,7 +279,11 @@ function vaWriteIfAbsent_(ss,name,key,obj,keyCol,doc){
  var values=header.map(function(h){
   return Object.prototype.hasOwnProperty.call(obj,h)?vaCell_(obj[h]):"";
  });
- if(row){vaVerifyRow_(sheet,row,keyCol,key,urlHeader,doc.originalUrl);return 0;}
+ if(row){
+  if(keyCol==="Dedupe Key")vaRecoverPartialSource_(ss,name,row,{key:key},doc);
+  else vaVerifyRow_(sheet,row,keyCol,key,urlHeader,doc.originalUrl);
+  return 0;
+ }
  var dest=sheet.getLastRow()+1;
  if(dest>sheet.getMaxRows())sheet.insertRowsAfter(sheet.getMaxRows(),Math.max(30,dest-sheet.getMaxRows()));
  sheet.getRange(dest,1,1,header.length).setValues([values]);
@@ -288,7 +314,7 @@ function vaSource_(d,ids){
  return {
   "Dedupe Key":ids.key,"Unternehmen":d.company,"Position / Projekt":d.title,
   "Bereich":d.lane,"Branche (Primär)":d.industry||"Branche noch prüfen",
-  "Consultant Segment":"nicht anwendbar","Einstufung":"REVIEW",
+  "Consultant Segment":"nicht anwendbar","Einstufung":"Watchlist / Frühindikator",
   "Lead-Status":"Neu","Vertragsart":"Festanstellung laut Originalquelle",
   "Standort":d.location||"Standort nicht bestätigt",
   "Remote / Reise / Auslastung":"nicht öffentlich verifiziert",
@@ -319,7 +345,7 @@ function vaSignal_(d,ids){
   "Signal-Typ":"Hiring","Signal-Untertyp":"Neue aktive Arbeitgeber-Stellenausschreibung",
   "Bereich":d.lane,"Branche":d.industry||"noch prüfen",
   "Region":d.location||"nicht bestätigt",
-  "Signal-Datum":now,"Gefunden am":now,"Confidence":"Hoch – Original-ATS bestätigt",
+  "Signal-Datum":now,"Gefunden am":now,"Confidence":"Mittel",
   "Evidence Summary":"Originalanzeige "+d.originalUrl+
     "; ATS "+d.provider+"; Stellen-ID "+ids.atsId+
     "; Titel "+d.title+"; fachlicher Account-Zugang noch zu prüfen.",
@@ -327,8 +353,8 @@ function vaSignal_(d,ids){
   "Source URL":d.originalUrl,"Status":"An Opportunity angehängt",
   "Recommended Use":"Stage 0 – interner Owner-/Off-Limit-Check vor Ansprache",
   "Last Updated":now,"DealEngine Relevanz":"Verarbeitet",
-  "Interim Demand Relevanz":"Nicht belegt (Perm)",
-  "Executive Search Relevanz":String(d.seniority)==="Leadership"?"Review Head-/Leadership-Level":"Nicht belegt",
+  "Interim Demand Relevanz":"Watch",
+  "Executive Search Relevanz":"Watch",
   "Consumer Routing":d.lane,
   "Cross-Feed Note":"Keine automatischen Interim-/Executive-Cross-Feed-Claims.",
   "Discovered By":"PROD-AUTO-PUBLISH / "+d.agentKey,
