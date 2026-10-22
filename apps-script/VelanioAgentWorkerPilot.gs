@@ -77,15 +77,25 @@ function velanioWorkerPilotRun() {
           var canonical=velanioWorkerCanonical_(url);
           var exists=known.has(canonical);
           if(exists)already++;
+          // QG is a REVIEW gate, never a production approval. Store API's actual
+          // QA status and official source evidence instead of a generic placeholder.
+          var qaStatus=String(item.qaStatus||"REVIEW_NOT_QUALIFIED");
+          var liveStatus=String(item.liveCheckStatus||"LIVE_CHECK_PENDING");
+          var liveReason=String(item.liveCheckReason||"");
+          var eligibleQa=/^REVIEW_/.test(qaStatus) && item.productionWriteAllowed===false;
+          if(!eligibleQa) return; // fail closed on old or malformed bridge payload
+          var finalStatus=exists?"SOURCE_DUPLICATE_REVIEW":qaStatus;
+          var qaNote="QG: "+qaStatus+"; ORIGINAL: "+liveStatus+" ("+liveReason+
+            "); OWNER: noch nicht geprüft; Produktions-Write: gesperrt.";
           newRows.push([
             runId,owner,discoveryId,
             velanioWorkerCell_(item.lane),velanioWorkerCell_(item.company),
             velanioWorkerCell_(item.title),velanioWorkerCell_(item.location),
             velanioWorkerCell_(url),velanioWorkerCell_(item.queueFreshAt),
             velanioWorkerStamp_(new Date()),
-            exists?"BEREITS_IN_QUELLE_PRÜFEN":"REVIEW_NOT_QUALIFIED",
+            finalStatus,
             exists?"EXAKTE_ORIGINAL_URL_VORHANDEN":"KEIN_EXAKTER_URL_TREFFER",
-            velanioWorkerCell_(item.contractHint),"Nur Quelleingang; keine fachliche/Live-Verifikation"
+            velanioWorkerCell_(item.contractHint),velanioWorkerCell_(qaNote)
           ]);
           staged.add(marker);
         });
